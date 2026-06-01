@@ -1,0 +1,468 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User Authentication & Profile
+model User {
+  id            String   @id @default(cuid())
+  publicId      String?  @unique @default(uuid()) // Make optional initially
+  email         String?  @unique
+  phone         String?  @unique
+  telegramId    String?  @unique
+  username      String?  @unique
+  
+  @@index([publicId], name: "User_publicId_idx")
+  @@index([email], name: "User_email_idx")
+  @@index([username], name: "User_username_idx")
+  passwordHash  String?
+  isVerified    Boolean  @default(false)
+  isActive      Boolean  @default(true)
+  role          String @default("USER") // FULL_ADMIN, LIMITED_ADMIN, USER, VENDOR
+  permissions   Json? // JSON array of permission strings for limited admins
+  
+  // Email verification
+  emailVerificationToken      String?
+  emailVerificationExpires    DateTime?
+  
+  // Password reset
+  passwordResetToken          String?
+  passwordResetExpires        DateTime?
+  
+  // Tracking
+  lastLogin                   DateTime?
+  loginAttempts               Int      @default(0)
+  lockUntil                   DateTime?
+  // Profile information
+  bio           String? // User biography
+  website       String? // Personal website
+  twitter       String? // Twitter handle
+  linkedin      String? // LinkedIn profile
+  github        String? // GitHub profile
+
+  // Seller information
+  sellerAddress Json? // Address information for sellers
+  sellerTerms   String? // Seller's terms and conditions
+  sellerPhone   String? // Seller's contact phone
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  wallet        Wallet?
+  smmOrders     SMMOrder[]
+  freelancerProfile FreelancerProfile?
+  clientOrders       FreelancerOrder[] @relation("Client")
+  products      Product[]
+  productOrders ProductOrder[]
+  p2pOrders     P2POrder[] @relation("Buyer")
+  p2pOrdersAsSeller P2POrder[] @relation("Seller")
+  ads           Ad[]
+  chatMessages  ChatMessage[] @relation("Sender")
+  chatRooms     ChatRoom[] @relation("Participant1")
+  chatRooms2    ChatRoom[] @relation("Participant2")
+  transactions  Transaction[]
+  reviews       Review[]
+  aiConversations AIConversation[]
+  settings      UserSettings?
+  loginHistory  LoginHistory[]
+
+  // Indexes for query optimization
+  @@index([phone], name: "User_phone_idx")
+  @@index([telegramId], name: "User_telegramId_idx")
+}
+
+// UserRole enum converted to String for SQLite compatibility
+
+// Wallet & Balance System
+model Wallet {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Decimal  @default(0) @db.Decimal(18, 8) // Using Decimal for precision
+  currency  String   @default("USD") // USD, ETB, ETH, etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+}
+
+// Transactions
+model Transaction {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id])
+  walletId      String
+  wallet        Wallet          @relation(fields: [walletId], references: [id])
+  type          String // DEPOSIT, WITHDRAWAL, PAYMENT, REFUND, COMMISSION, BONUS
+  amount        Decimal         @db.Decimal(18, 8)
+  currency      String @default("USD")
+  status        String @default("PENDING") // PENDING, COMPLETED, FAILED, CANCELLED
+  paymentMethod String // PAYPAL, PAYEER, CRYPTO, CHAPPA, SANTIMPAY, TELEBIRR, BANK_TRANSFER, INTERNAL
+  paymentId     String?         // External payment ID
+  description   String?
+  metadata      Json?           // Additional data
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+// Enums converted to String for SQLite compatibility
+
+// SMM Panel Services (stored in DB for reliable ordering)
+model SMMService {
+  id                  String   @id @default(cuid())
+  serverId            Int      // 1 = N1PANEL, 2 = JUSTANOTHERPANEL
+  providerServiceId   String   // The actual service ID from the provider
+  name                String
+  category            String
+  type                String?
+  rate                Decimal  @db.Decimal(18, 8) // Provider's rate per 1k
+  min                 Int      @default(1)
+  max                 Int      @default(1000)
+  increment           Int      @default(1)
+  description         String?
+  dripfeed            Boolean  @default(false)
+  refill              Boolean  @default(false)
+  cancel              Boolean  @default(false)
+  providerData        Json?    // Raw provider response data
+  isActive            Boolean  @default(true)
+  lastSyncedAt        DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  orders              SMMOrder[] // Opposite relation field
+
+  @@index([serverId])
+  @@index([providerServiceId])
+  @@index([category])
+  @@index([isActive])
+  @@unique([serverId, providerServiceId], name: "unique_provider_service")
+}
+
+// SMM Panel Orders
+model SMMOrder {
+  id            String        @id @default(cuid())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  smmServiceId  String        // Reference to SMMService in DB
+  smmService    SMMService    @relation(fields: [smmServiceId], references: [id])
+  serviceId     String        // Provider service ID (legacy, for reference)
+  serviceName   String
+  provider      String @default("N1PANEL") // N1PANEL, JUSTANOTHERPANEL
+  quantity      Int
+  price         Decimal       @db.Decimal(18, 8)
+  status        String @default("PENDING") // PENDING, PROCESSING, COMPLETED, CANCELLED, FAILED
+  externalOrderId String?     // Order ID from external panel
+  link          String?       // Target link for the service
+  panelResponse Json?         // Full raw response from provider
+  panelError    Json?         // Error details if failed
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([smmServiceId])
+}
+
+// Enums converted to String for SQLite compatibility
+
+// Freelancing Platform
+model FreelancerProfile {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio           String?
+  skills        String[] // Array of skills
+  telegramChannel String? // Link to Telegram channel for portfolio
+  displayName   String?
+  contactEmail  String?
+  contactPhone  String?
+  profilePhotoUrl String?
+  availability  String?
+  experience    String?
+  yearsOfExperience Int?
+  portfolioLinks String[]
+  rating        Decimal  @default(0) @db.Decimal(3, 2)
+  totalReviews  Int      @default(0)
+  completedJobs Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  services      FreelancerService[]
+  orders        FreelancerOrder[] @relation("FreelancerProfile")
+}
+
+model FreelancerService {
+  id            String   @id @default(cuid())
+  freelancerId  String
+  // Link service directly to the freelancer profile (one foreign key, one relation)
+  profile       FreelancerProfile @relation(fields: [freelancerId], references: [id])
+  title         String
+  description   String
+  category      String
+  price         Decimal       @db.Decimal(18, 8)
+  deliveryTime  Int      // Days
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orders        FreelancerOrder[]
+}
+
+model FreelancerOrder {
+  id            String              @id @default(cuid())
+  serviceId     String
+  service       FreelancerService  @relation(fields: [serviceId], references: [id])
+  // Link order to the freelancer profile instead of duplicating relations
+  freelancerId  String
+  freelancerProfile FreelancerProfile @relation("FreelancerProfile", fields: [freelancerId], references: [id])
+  clientId      String
+  client        User                @relation("Client", fields: [clientId], references: [id])
+  status        String @default("PENDING") // PENDING, ACCEPTED, IN_PROGRESS, DELIVERED, COMPLETED, CANCELLED, DISPUTED
+  requirements  String?
+  price         Decimal       @db.Decimal(18, 8)
+  deliveredAt   DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([clientId])
+  @@index([freelancerId])
+  @@index([status])
+}
+
+// Enum converted to String for SQLite compatibility
+
+// Product Marketplace
+model Product {
+  id            String   @id @default(cuid())
+  sellerId      String
+  seller        User     @relation(fields: [sellerId], references: [id])
+  name          String
+  description   String
+  category      String
+  price         Decimal       @db.Decimal(18, 8)
+  stock         Int      @default(0)
+  condition     String @default("BRAND_NEW") // BRAND_NEW, SLIGHTLY_USED, USED
+  images        String[] // Array of image URLs
+  isActive      Boolean  @default(true)
+  boostExpiresAt DateTime?
+  isBoosted     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  orders        ProductOrder[]
+
+  @@index([condition])
+  @@index([boostExpiresAt])
+  @@index([isBoosted])
+}
+
+model ProductOrder {
+  id            String            @id @default(cuid())
+  productId     String
+  product       Product           @relation(fields: [productId], references: [id])
+  buyerId       String
+  buyer         User              @relation(fields: [buyerId], references: [id])
+  quantity      Int
+  totalPrice    Decimal           @db.Decimal(18, 8)
+  status        String @default("PENDING") // PENDING, CONFIRMED, PROCESSING, SHIPPED, DELIVERED, CANCELLED, REFUNDED
+  shippingAddress Json?           // Address information
+  trackingNumber String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([buyerId])
+  @@index([status])
+}
+
+// Enum converted to String for SQLite compatibility
+
+// P2P Crypto Trading
+model P2POrder {
+  id            String        @id @default(cuid())
+  buyerId       String
+  buyer         User          @relation("Buyer", fields: [buyerId], references: [id])
+  sellerId      String        // Admin only
+  seller        User          @relation("Seller", fields: [sellerId], references: [id])
+  cryptoType    String        // BTC, ETH, USDT, TRX, etc.
+  amount        Decimal         @db.Decimal(18, 8)
+  price         Decimal       @db.Decimal(18, 8)
+  totalPrice    Decimal           @db.Decimal(18, 8)
+  status        String @default("PENDING") // PENDING, APPROVED, PROCESSING, COMPLETED, CANCELLED, REJECTED
+  paymentMethod String // PAYPAL, PAYEER, CRYPTO, CHAPPA, SANTIMPAY, TELEBIRR, BANK_TRANSFER, INTERNAL
+  adminNotes    String?       // Admin notes
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([buyerId])
+  @@index([sellerId])
+  @@index([status])
+}
+
+// Enum converted to String for SQLite compatibility
+
+// Ad Service
+model Ad {
+  id            String      @id @default(cuid())
+  advertiserId  String
+  advertiser    User        @relation(fields: [advertiserId], references: [id])
+  title         String
+  description   String
+  imageUrl      String?
+  link          String?
+  adType        String // BANNER, SPONSORED, TELEGRAM, POPUP
+  status        String @default("PENDING") // PENDING, ACTIVE, PAUSED, COMPLETED, REJECTED
+  budget        Decimal     @db.Decimal(18, 8)
+  spent         Decimal     @default(0) @db.Decimal(18, 8)
+  impressions   Int         @default(0)
+  clicks        Int         @default(0)
+  startDate     DateTime?
+  endDate       DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([advertiserId])
+  @@index([status])
+}
+
+// Enums converted to String for SQLite compatibility
+
+// Encrypted Chat
+model ChatRoom {
+  id            String   @id @default(cuid())
+  participant1Id String
+  participant1  User     @relation("Participant1", fields: [participant1Id], references: [id])
+  participant2Id String
+  participant2  User     @relation("Participant2", fields: [participant2Id], references: [id])
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  isTemporary   Boolean  @default(false)  // Whether this is a temporary chat
+  lastActivity  DateTime @default(now())  // Last activity timestamp
+  timeoutHours  Int      @default(24)     // Hours until chat expires after inactivity
+  isConverted   Boolean  @default(false)  // Whether temp chat was converted to permanent
+  blockedBy     String?                   // ID of user who blocked the other (if any)
+
+  messages      ChatMessage[]
+
+  @@unique([participant1Id, participant2Id])
+  @@index([participant1Id])
+  @@index([participant2Id])
+  @@index([isTemporary, lastActivity])    // For cleaning up expired temp chats
+}
+
+model ChatMessage {
+  id            String   @id @default(cuid())
+  roomId        String
+  room          ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId      String
+  sender        User     @relation("Sender", fields: [senderId], references: [id])
+  content       String   // Encrypted content
+  isEncrypted   Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@index([roomId])
+  @@index([senderId])
+  @@index([createdAt])
+}
+
+// Reviews
+model Review {
+  id            String   @id @default(cuid())
+  reviewerId    String
+  reviewer      User     @relation(fields: [reviewerId], references: [id])
+  revieweeId    String   // User being reviewed
+  rating        Int      // 1-5
+  comment       String?
+  orderType     String?  // FREELANCER, PRODUCT, etc.
+  orderId       String?
+  createdAt     DateTime @default(now())
+
+  @@index([revieweeId])
+  @@index([orderType, orderId])
+}
+
+// AI Assistant Conversations
+model AIConversation {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String?  // Optional conversation title
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  messages      AIMessage[]
+
+  @@index([userId])
+}
+
+model AIMessage {
+  id            String   @id @default(cuid())
+  conversationId String
+  conversation  AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role          String // USER, ASSISTANT, SYSTEM
+  content       String
+  metadata      String?  // Additional data (JSON string)
+  createdAt     DateTime @default(now())
+
+  @@index([conversationId])
+}
+
+model UserSettings {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  emailNotifications    Boolean  @default(true)
+  smsNotifications      Boolean  @default(false)
+  marketingEmails       Boolean  @default(false)
+  orderUpdates          Boolean  @default(true)
+  securityAlerts        Boolean  @default(true)
+  promotionalEmails     Boolean  @default(false)
+  darkMode              Boolean  @default(false)
+  language              String   @default("en")
+  timezone              String   @default("UTC")
+  dateFormat            String   @default("MM/DD/YYYY")
+  timeFormat            String   @default("12h")
+  currency              String   @default("USD")
+  twoFactorEnabled      Boolean  @default(false)
+  profileVisibility     String   @default("public") // 'public', 'private', 'friends'
+  emailFrequency        String   @default("immediate") // 'immediate', 'daily', 'weekly'
+  autoSave              Boolean  @default(true)
+  showOnlineStatus      Boolean  @default(true)
+  allowDirectMessages   Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model LoginHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  device    String?
+  location  String?
+  ip        String?
+  userAgent String?
+  success   Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// Enum converted to String for SQLite compatibility
+

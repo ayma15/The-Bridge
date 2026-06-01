@@ -1,0 +1,13 @@
+[build]
+  base = "client"
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Optional: fallback for deep links/refreshes
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
